@@ -21,8 +21,8 @@ GPIO.setmode(GPIO.BCM)
 GPIO.setup(GPIO_PIR, GPIO.IN)
 GPIO.setup(GPIO_LED, GPIO.OUT, initial=GPIO.LOW)
 
-delay_event_trigger = False
-last_event_time = datetime.now()
+is_trigger_pir_off = False
+time_stamp = time.time()
 sensor_status = GPIO.LOW
 
 logging.basicConfig(level=logging.INFO,
@@ -41,35 +41,31 @@ def signal_term_handler(signal, frame):
 signal.signal(signal.SIGTERM, signal_term_handler)
 signal.signal(signal.SIGINT, signal_term_handler)
 
-def my_callback(channel):
-    global last_event_time
+def pir_signal_callback(channel):
+    global time_stamp
     global sensor_status
-    global delay_event_trigger
+    global is_trigger_pir_off
 
-    logging.info('event trigger')
-
-    now = datetime.now()
+    time_stamp = time.time()
     sensor_status = GPIO.input(channel)
+    GPIO.output(GPIO_LED, sensor_status)
 
     if sensor_status:  # and check again the input
-        delay_event_trigger = False
-
-        logging.info('PIR ON')
+        is_trigger_pir_off = False
 
         # trigger PIR event
-        os.system('initctl emit --no-wait pir-on')
+        send_event('pir-on')
     else:
-        delay_event_trigger = True
-
-        logging.info('PIR OFF')
+        is_trigger_pir_off = True
 
         # trigger PIR event
-        ret = os.system('initctl emit --no-wait pir-off')
+        send_event('pir-off')
 
-        logging.info('-------')
 
-    GPIO.output(GPIO_LED, sensor_status)
-    last_event_time = now
+def send_event(name):
+    cmd = 'initctl emit --no-wait %s' % name
+    logging.info('%s: %s' % (os.getpid(), cmd))
+    os.system(cmd)
 
 
 # init sensor and LED status
@@ -77,20 +73,23 @@ sensor_status = GPIO.input(GPIO_PIR)
 GPIO.output(GPIO_LED, sensor_status)
 print 'LED status:', GPIO.input(GPIO_LED)
 
-logging.info('PIR sensor start')
+logging.info('PIR sensor start (%s)' % os.getpid())
 
-GPIO.add_event_detect(GPIO_PIR, GPIO.BOTH, callback=my_callback, bouncetime=200)
+GPIO.add_event_detect(GPIO_PIR, GPIO.BOTH, callback=pir_signal_callback, bouncetime=50)
 
-# you can continue doing other stuff here
 while True:
-    if delay_event_trigger:
-        time_delta = datetime.now() - last_event_time
+    time.sleep(1)
+
+    if is_trigger_pir_off:
+        time_now = time.time()
 
         # delay off event
-        if time_delta.total_seconds() >= DELAY_OFF_TIME:
-            delay_event_trigger = False  # clear event trigger, do not send event one more times
-            logging.info('PIR delay OFF')
-            ret = os.system('initctl emit --no-wait pir-delay-off')
-            logging.info('-------------')
-    time.sleep(1)
+        if time_now - time_stamp >= DELAY_OFF_TIME:
+            is_trigger_pir_off = False  # clear event trigger, do not send event one more times
+
+            send_event('pir-delay-off')
+
+            # reassign event handler, GPIO bug?
+            GPIO.remove_event_detect(GPIO_PIR)
+            GPIO.add_event_detect(GPIO_PIR, GPIO.BOTH, callback=pir_signal_callback, bouncetime=50)
 
