@@ -12,7 +12,7 @@ from datetime import datetime
 
 GPIO_PIR = 23
 GPIO_LED = 27
-DELAY_OFF_TIME = 60
+DELAY_OFF_TIME = 30
 
 print 'GPIO Version:', GPIO.VERSION
 
